@@ -1,0 +1,1442 @@
+---
+title: "Creació de models de classificació de futbolistes a partir d'estadístiques defensives"
+author: "Autor: Alexandre Llinàs Martínez"
+date: "Gener 2023"
+output:
+  html_document:
+    highlight: default
+    number_sections: yes
+    theme: cosmo
+    toc: yes
+    toc_depth: 2
+    includes:
+      in_header: 05.584-PEC-header.html
+  word_document: default
+  pdf_document:
+    highlight: zenburn
+    toc: yes
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+******
+# Introducció
+******
+
+Avui dia les dades massives i les noves tecnologies estan revolucionant el món de l'esport, i, encara més, impulsant la indústria de l'esport rei: el futbol. S'apropen temps emocionants per a l'anàlisi del rendiment dels esports d'equip, ja que cada cop hi haurà més i més dades disponibles que permetin investigacions més refinades.
+
+Des de un punt de vista tàctic, hi ha dos tipus d'anàlisi possible: l'individual i el col·lectiu. L'anàlisi individual es centra en l'observació de les accions que realitza cada jugador i quina influència té en el joc. És en aquest punt on centrarem la nostra pràctica. A grans trets, els jugadors es classifiquen en defenses, migcampistes i davanters (excloem al porter que té unes característiques totalment diferents) i cada un te (de forma genèrica) uns objectius diferents associats a unes accions individuals concretes: evitar el gol (accions defensives), crear ocasions de gol/marcar gol (accions ofensives). En aquest petit treball intentarem classificar els jugadors en funció de les seves accions i esbrinar si realment les accions considerades 'defensives' són en realitat indicadors de rendiment dels defenses.
+
+
+
+******
+# Elecció conjunt de dades
+******
+
+El dataset amb el que treballarem és una combinació de varies taules de [FBREF](https://fbref.com/es), pàgina amb multitud d'estadístiques del mon del futbol. Concretament ens hem centrat en estadístiques defensives de la temporada 2021-2022 de [La Liga](https://fbref.com/es/comps/12/2021-2022/Estadisticas-2021-2022-La-Liga) i [Premier League](https://fbref.com/es/comps/9/2021-2022/Estadisticas-2021-2022-Premier-League). Està format per una relació de tots els jugadors d'ambdues lligues i una sèrie de dades referents només a aspectes defensius.
+
+Una vegada aclarit l'objectiu del procés de mineria i l'elecció i origen del dataset, les passes que descriurem a continuació (tot i que no de forma seqüencial )són:
+
+* L'exploració de les dades: extreure informació sobre l'origen de les dades i intentar comprendre-les.
+
+* Preparació les dades:  caldrà procedir a preparar aquestes dades, netejar-les, cercar i tractar possibles dades duplicades, dades incompletes, dades incorrectes, dades esbiaixades, dades errònies, etc. per poder emprar-les en la construcció del model que donarà suport a la decisió.
+
+* Transformació de dades: transformar dades de categòriques a numèriques, simplificar valors, normalitzar valors.
+
+* Reducció de la dimensionalitat: eliminar atributs irrellevants, eliminar outliers, buscar combinacions d'atributs similars.
+
+
+******
+# Exploració del conjunt de dades
+******
+
+```{r message= FALSE, warning=FALSE}
+if(!require('dplyr'))install.packages('dplyr');library(dplyr)
+if(!require('reshape2'))install.packages('reshape2');library(reshape2)
+if(!require('ggplot2'))install.packages('ggplot2');library(ggplot2)
+if(!require('Rmisc')) install.packages('Rmisc'); library(Rmisc)
+if(!require('grid')) install.packages('grid');library(grid)
+if(!require('gridExtra')) install.packages('gridExtra'); library(gridExtra)
+if(!require('corrplot')) install.packages('corrplot'); library(corrplot)
+```
+### Objeciu Analític
+
+> Com objectiu principal volem saber si podem diferenciar els jugadors per la seva posició segons les seves intervencions en accions defensives i si hi ha diferències entre la lliga anglesa i espanyola. Primer peguem un cop d'ull al dataset.
+
+```{r}
+def_stats_df <- read.csv('/Users/alex/Desktop/UOC/SEM\ 6/Mineria\ de\ Dades/PRA\ 1/def_stats_ang_esp_2122.csv')
+head(def_stats_df)
+```
+
+> Sembla que està bastant correcte i preparat, podrem treballar bé amb el dataset. Anem a fer un visionat de la dimensionalitat del dataset, del tipus de variables que conté.
+
+```{r}
+str(def_stats_df)
+```
+
+> Tenim **1140** observacions i **37** variables. 6 variables son strings que haurem de transformar en factors per poder treballar amb elles. Les 31 restants són totes numèriques (3 decimals i 28 enteres)
+
+Revisem la descripció de les variables contingudes al dataset. Construïm un petit diccionari de dades utilitzant la documentació de [FBREF](https://fbref.com/es).
+
+
++ **Jugador**  nom del jugador
++ **País**  país de neiximent del jugador
++ **X90.s** minuts jugats dividits per 90
+
+**FETS A ESTUDIAR**
+
++ **Liga**  lliga on ha participiat (PremierLeague o LaLiga)
++ **Equipo** equip on ha disputat la temporada
++ **Posc** posició principal (PO=Porter, DF= Defensa, CC = migcampista, DL=Davanter)
++ **Posc2** posició secundària (PO=Porter, DF= Defensa, CC = migcampista, DL=Davanter)
++ **Fls** nombre de faltes comeses
++ **FR** nombre de faltes rebudes
++ **PA** nombre de fores de joc
++ **X..Duelos.aéreos.ganados**  percentatge de disputes aèries guanyades
++ **Int.x** nombre de pilotes interceptades
++ **Derribos.Tkl** nombre d'entrades realitzades
++ **Tkl..contra.dribles** percentatge d'entrades exitoses
++ **Tkl.Int** nombre d'entrades + nombre d'intercepcions
++ **Desp.** nombre de pilotes refusades
++ **Bloqueos** nombre total de bloquejos (BloqueosDis+BloqueosPases)
++ **Recup.** nombre de recuperacions de pilotes sense poseïdor
+
+**ALTRES**
+
++ **Edad** edat del jugador
++ **Nacimiento** Any de naiximent
++ **TA** nombre de targetes grogues rebudes
++ **TR** nombre de targetes vermelles rebudes
++ **X2a.amarilla** nombre de segones targetes grogues
++ **Penal.concedido** nombre de penals concedits
++ **GC** nombre de gols en contra
++ **Duelos.aéreos.Ganados** nombre de disputes aèries guanyades
++ **Duelos.aéreosPerdidos** nombre de disputes aèries perdudes
++ **Derribos.TklG** nombre d'entrades guanyades
++ **Derribos.3.º.def.** nombre d'entrades realitzades al terç defensiu del camp
++ **Derribos.3.º.cent** nombre d'entrades realitzades al terç central del camp
++ **Derribos.3.º.ataq** nombre d'entrades realitzades al terç ofensiu del camp
++ **Tkl.contra.dribles** nombre d'entrades exitoses realitzades al un jugador que intenta un dribbling
++ **Int..contra.dribles** nombre d'entrades intentades contra un jugador que fa un dribbling
++ **contra.dribles.Pasado** propietari del segment 
++ **BloqueosDis** nombre de tirs bloquejats
++ **BloqueosPases** nombre de passadas bloquejades    
++ **Err** nombre d'errors que provoquen un tir del contrari
+
+> Aprofitant l’experiència en el camp d'estudi i per no allargar massa el procés exploratori, farem una selecció prèvia de les característiques que creiem que son més influents per l'objectiu de l'estudi.
+
+```{r}
+# convertim en factors
+factors <- c('País','Liga','Equipo','Posc','Posc2')
+def_stats_df[factors] <- lapply(def_stats_df[factors], factor)
+
+# seleccionem les variables a estudiar i visusualitzem un resum estadístic
+def_stats_df <- def_stats_df %>% select(Jugador, País, X90.s,
+                                        Liga, Equipo, Posc, Posc2,
+                                        Fls,FR, PA, X..Duelos.aéreos.ganados,
+                                        Int.x,Derribos.Tkl, Tkl.Int,
+                                        Tkl..contra.dribles,Desp., Bloqueos, Recup.
+                                        )
+
+summary(def_stats_df)
+```
+
+### Preprocessament i gestió de característiques
+#### Neteja
+
+>Les dades sobre els porters les eliminarem ja que és una posició molt específica amb les seves pròpies característiques i no ens interessa També veiem com hi ha un valor nul per la variable posició així que l'eliminarem. A les variables 'X..Duelos.aéreos.ganados' i 'Tkl..contra.dribles' tenim gran quantitat de valors faltants però es degut a que són percentatges d'èxit d'unes accions, que si no es donen, no es poden calcular, així que imputarem zeros. Les dades faltants restants les eliminarem. Descartarem les dades referents als porters i la variable de gols en contra.
+
+```{r}
+# eliminem les observacions associades a la posició de porter i un valor perdut
+def_stats_df <- def_stats_df %>% filter((Posc !='PO') & (Posc !=''))
+def_stats_df <- droplevels(def_stats_df)
+# inputem 0 a les variables esmentades
+def_stats_df$X..Duelos.aéreos.ganados[is.na(def_stats_df$X..Duelos.aéreos.ganados)] <- 0
+def_stats_df$Tkl..contra.dribles[is.na(def_stats_df$Tkl..contra.dribles)] <- 0
+# eliminem valors faltants
+def_stats_df <- na.omit(def_stats_df)
+```
+
+#### Normalització i filtratge
+
+> Fent ús dels coneixements previs sobre l’àrea de negoci, farem un primer filtratge per la variable 'X90.s', ja que les dades de jugadors que hagin jugat molt poc poden no ser representatives del seu valor i produir esbiaixis en el nostre estudi i no ens interessa. El nombre màxim es de 38, filtrarem per jugadors que hagin disputat al menys 3.8 partits en minuts acumulats, que coincideix amb el primer quartil. També aprofitarem per normalitzar les variables numèriques per aquesta mateixa variable, així el valor de les dades no dependrà de la quantitat de temps disputat.
+
+```{r}
+# filtratge
+def_stats_df <-  def_stats_df %>% filter(X90.s >= 3.8)
+
+# normalització
+def_stats_df[c(8:10,12:14,16:18)] <- def_stats_df[c(8:10,12:14,16:18)]/def_stats_df[,3]
+```
+
+#### Anàlisi visual
+##### Dades numèriques
+
+> Procedim a fer una anàlisi visual de les dades agrupades per posició i veure com son les distribucions de les dades numèriques.
+
+```{r}
+
+HistPA <- ggplot(def_stats_df, aes(PA, Posc, fill = Posc)) +
+    geom_violin(width=1) +
+    geom_boxplot(width=0.07,outlier.shape = NA, color="white") +
+    coord_flip() +
+    xlab("Fores de Joc") +
+    ylab("Posició principal") +
+    theme(legend.position="none")+
+    ggtitle("Violin de Fores de Joc")+
+    geom_hline(data=def_stats_df, aes(yintercept = mean(PA)),
+             linetype="dashed",color="grey")
+
+HistFls <- ggplot(def_stats_df, aes(Fls, Posc, fill = Posc)) +
+    geom_violin(width=1) +
+    geom_boxplot(width=0.07,outlier.shape = NA, color="white") +
+    coord_flip() +
+  xlab("Faltes Comeses") +
+  ylab("Posició principal") +
+  theme(legend.position="none")+
+  ggtitle("Violin de Faltes Comeses ")+
+  geom_hline(data=def_stats_df, aes(yintercept = mean(Fls)),
+             linetype="dashed",color="grey")
+
+HistFR <- ggplot(def_stats_df, aes(FR, Posc, fill = Posc)) +
+    geom_violin(width=1) +
+    geom_boxplot(width=0.07,outlier.shape = NA, color="white") +
+    coord_flip() +
+  xlab("Faltes Rebudes") +
+  ylab("Posició Principal") +
+  theme(legend.position="none")+
+  ggtitle("Violin de Faltes Rebudes")+
+  geom_hline(data=def_stats_df, aes(yintercept = mean(FR)),
+             linetype="dashed",color="grey")
+
+HistInt <- ggplot(def_stats_df, aes(Int.x, Posc, fill = Posc)) +
+    geom_violin(width=1) +
+    geom_boxplot(width=0.07,outlier.shape = NA, color="white") +
+    coord_flip() +
+  xlab("Pilotes Interceptades") +
+  ylab("Posició Principal") +
+  theme(legend.position="none" )+
+  ggtitle("Violin ode Pilotes Interceptades")+
+  geom_hline(data=def_stats_df, aes(yintercept = mean(Int.x)),
+             linetype="dashed",color="grey")
+
+
+# Plot de totes les visualitzacions
+grid.arrange(HistPA + ggtitle(""),
+             HistFls + ggtitle(""),
+             HistFR + ggtitle(""),
+             HistInt  + ggtitle(""),
+             nrow = 2,
+             top = textGrob("Stats Defensius per 90 minuts",
+                            gp=gpar(fontsize=15))
+)
+```
+
+> Per aquestes variables veiem com les distribucions dels defenses son sensiblement diferents per les faltes comeses (tenint la distribució de probabilitat més pronunciada cap a 1) i per les faltes rebudes (reben menys faltes). Quasi no provoquen fores de joc (esperable) i són els que intercepten més pilotes amb una distribució més plana entre 1 i 1,5.
+
+```{r}
+
+HistDtkl <- ggplot(def_stats_df, aes(Derribos.Tkl, Posc, fill = Posc)) +
+    geom_violin(width=1) +
+    geom_boxplot(width=0.07,outlier.shape = NA, color="white") +
+    coord_flip() +
+    xlab("Entrades realitzades") +
+    ylab("Posició principal") +
+    theme(legend.position="none")+
+    ggtitle("Violin d'entrades realitzades")+
+    geom_hline(data=def_stats_df, aes(yintercept = mean(Derribos.Tkl)),
+             linetype="dashed",color="grey")
+
+Histtkl.int <- ggplot(def_stats_df, aes(Tkl.Int, Posc, fill = Posc)) +
+    geom_violin(width=1) +
+    geom_boxplot(width=0.07,outlier.shape = NA, color="white") +
+    coord_flip() +
+  xlab("Entrades + intercepcions") +
+  ylab("Posició Principal") +
+  theme(legend.position="none")+
+  ggtitle("Violin de entrades + intercepcions")+
+  geom_hline(data=def_stats_df, aes(yintercept = mean(Tkl.Int)),
+             linetype="dashed",color="grey")
+
+HistXtkl <- ggplot(def_stats_df, aes(Tkl..contra.dribles, Posc, fill = Posc)) +
+    geom_violin(width=1) +
+    geom_boxplot(width=0.07,outlier.shape = NA, color="white") +
+    coord_flip() +
+  xlab("% Entrades exitoses") +
+  ylab("Posició Principal") +
+  theme(legend.position="none" )+
+  ggtitle("Violin % entrades exitoses")+
+  geom_hline(data=def_stats_df, aes(yintercept = mean(Tkl..contra.dribles)),
+             linetype="dashed",color="grey")
+
+HistXAG <- ggplot(def_stats_df, aes(X..Duelos.aéreos.ganados, Posc, fill = Posc)) +
+    geom_violin(width=1) +
+    geom_boxplot(width=0.07,outlier.shape = NA, color="white") +
+    coord_flip() +
+  xlab("% Aeris Guanyats") +
+  ylab("Posició Principal") +
+  theme(legend.position="none" )+
+  ggtitle("Violin % duels aeris guanyats")+
+  geom_hline(data=def_stats_df, aes(yintercept = mean(X..Duelos.aéreos.ganados)),
+             linetype="dashed",color="grey")
+
+# Plot de totes les visualitzacions
+grid.arrange(HistDtkl + ggtitle(""),
+             Histtkl.int + ggtitle(""),
+             HistXtkl  + ggtitle(""),
+             HistXAG + ggtitle(""),
+             nrow = 2,
+             top = textGrob("Stats Defensius per 90 minuts",
+                            gp=gpar(fontsize=15))
+)
+```
+
+> Per aquestes variables sorprèn que els defenses no son els que més entrades realitzen. Per els % de entrades i duels aeris exitosos es veuen unes distribucions més 'picudes' per les tres posicions i amb un % d'encert superior per les defenses respecte a les altres dues posicions.
+
+```{r}
+
+HistDesp <- ggplot(def_stats_df, aes(Desp., Posc, fill = Posc)) +
+    geom_violin(width=1) +
+    geom_boxplot(width=0.07,outlier.shape = NA, color="white") +
+    coord_flip() +
+    xlab("Pilotes refusades") +
+    ylab("Posició principal") +
+    theme(legend.position="none")+
+    ggtitle("Violin de Pilotes refusades")+
+    geom_hline(data=def_stats_df, aes(yintercept = mean(Desp.)),
+             linetype="dashed",color="grey")
+
+HistRecup <- ggplot(def_stats_df, aes(Recup., Posc, fill = Posc)) +
+    geom_violin(width=1) +
+    geom_boxplot(width=0.07,outlier.shape = NA, color="white") +
+    coord_flip() +
+  xlab("Recuperacions") +
+  ylab("Posició principal") +
+  theme(legend.position="none")+
+  ggtitle("Violin de Recuperacions ")+
+  geom_hline(data=def_stats_df, aes(yintercept = mean(Recup.)),
+             linetype="dashed",color="grey")
+
+HistB <- ggplot(def_stats_df, aes(Bloqueos, Posc, fill = Posc)) +
+    geom_violin(width=1) +
+    geom_boxplot(width=0.07,outlier.shape = NA, color="white") +
+    coord_flip() +
+  xlab("Pilotes bloquejades") +
+  ylab("Posició Principal") +
+  theme(legend.position="none")+
+  ggtitle("Violin de pilotes bloquejades")+
+  geom_hline(data=def_stats_df, aes(yintercept = mean(Bloqueos)),
+             linetype="dashed",color="grey")
+
+
+
+# Plot de totes les visualitzacions
+grid.arrange(HistDesp + ggtitle(""),
+             HistRecup + ggtitle(""),
+             HistB + ggtitle(""),
+             nrow = 2,
+             top = textGrob("Stats Defensius per 90 minuts",
+                            gp=gpar(fontsize=15))
+)
+```
+
+> Per aquestes variables, les pilotes refusades sí que ens proporcionen una informació valuosa per poder classificar els defenses. La seva distribució és molt plana comparat amb les altres variables i posicions, mentre per les altres 2 no és veuen distribucions molt diferents amb els centrecampistes. Aquests son els que més recuperacions realitzen, segurament per trobar-se al mig de les disputes aèries properes ambdues àrees. Com a conclusió tenim que algunes variables són més característiques dels defenses que d'altres. A més, tenim una sèrie d'outliers en algunes variables que no tractarem per la naturalesa de les dades, ja que aquestes depenen de la qualitat i de la forma de jugar de l'equip i del jugador en si. El que farem serà aplicar un model tolerant amb els outliers.
+
+> Ara sospitem que la posició secundària pot tenir quelcom a veure en la distribució de les accions. Per comprovar-ho sumarem les intercepcions, entrades, refusos, bloquejos i recuperacions per partit i veurem la distribució per posició principal i secundària.
+
+
+```{r}
+total <- rowSums(def_stats_df[ ,c('Tkl.Int','Desp.','Bloqueos','Recup.')])
+total_df <- cbind(def_stats_df %>% select(Posc,Posc2),total)
+
+posplot <- ggplot(total_df, aes(total, Posc, fill = Posc)) +
+    geom_violin(width=1) +
+    geom_boxplot(width=0.07,outlier.shape = NA, color="white") +
+    coord_flip() +
+  xlab("Acions defensives") +
+  ylab("Posició Principal") +
+  theme(legend.position="none")+
+  ggtitle("Violin d'accions defensives per 90 minuts")+
+  geom_hline(data=def_stats_df, aes(yintercept = mean(total)),
+             linetype="dashed",color="grey")
+
+posplot2 <- ggplot(total_df %>% filter(Posc2!=''), aes(total, Posc2, fill = Posc2)) +
+    geom_violin(width=1) +
+    geom_boxplot(width=0.07,outlier.shape = NA, color="white") +
+    coord_flip() +
+  xlab("Acions defensives") +
+  ylab("Posició Secundària") +
+  theme(legend.position="none")+
+  ggtitle("Violin d'accions defensives per 90 minuts")+
+  geom_hline(data=def_stats_df, aes(yintercept = mean(total)),
+             linetype="dashed",color="grey")
+
+grid.arrange(posplot + ggtitle(""),
+             posplot2 + ggtitle(""),
+             ncol = 2,
+             top = textGrob("Violin d'accions defensives per 90 minuts",
+                            gp=gpar(fontsize=15))
+             )
+```
+
+> Efectivament, si agrupem el total d'aquestes accions per posició secundària veiem com ara els valors de les distribucions per els jugadors que tenen una posició secundària com a defensors és més elevat. Aquesta informació sobre les etiquetes és important tenir-la en compte després.
+
+##### Dades categòriques
+
+> Procedim a fer una anàlisi visual de les dades categòriques.
+
+```{r}
+# plot
+layout(matrix(c(1,2,3,4), 2, 2, byrow = TRUE))
+plot(def_stats_df$Liga, main="Lliga on participen els jugadors",col ="slateblue",cex.main=1)
+plot(def_stats_df$Posc, main="Posició principal",col="cadetblue",cex.main=1)
+plot(def_stats_df$Posc2, main="Posició secundària",col="red",cex.main=1)
+```
+
+> Veiem com la proporció de jugadors entre ambdues lligues és quilibrat. En quant a les posicions, el grup menys nombros és el de davanters. Destaca que hi ha molts jugadors sense posició secundària o sense informació sobre aquesta. A continuació visualitzem la proporció de jugadors per posició en cada una de les lligues.
+
+```{r}
+# taula de proporcions de les posicions vs lliga
+tab <- def_stats_df  %>% select(Posc,Liga) %>%
+  table() %>% prop.table(., margin = 1)
+
+tab2 <- def_stats_df  %>% select(Posc2,Liga)%>% filter(Posc2 !='') %>% 
+  droplevels() %>% table() %>% prop.table(., margin = 1)
+
+# plots
+posp <- ggplot(as.data.frame(tab), aes(x=Posc, y=Freq, fill=Liga)) +
+  geom_col() + ggtitle('Proporció de jugadors per posició principal a les diferents lligues')
+
+poss <- ggplot(as.data.frame(tab2), aes(x=Posc2, y=Freq, fill=Liga)) +
+  geom_col() + ggtitle('Proporció de jugadors per posició secundària a les diferents lligues')
+
+grid.arrange(posp + ggtitle("Posició principal"),
+             poss + ggtitle("Posició secundària"),
+             ncol = 2,
+             top = textGrob("Proporció de jugadors per posició a les diferents lligues",
+                            gp=gpar(fontsize=15))
+             )
+```
+
+> En quant a la proporció per posició principal veiem que més o manco reparteixen al 50% entre La Liga i la Premier League. Per que fa a les posicions secundàries veiem com la proporció de defenses és superior a la Premier, mentre que la proporció de davanters és inferior per lo que podríem entendre la lliga com un poc més defensiva.
+
+> A continuació estudiarem les diferents distribucions de les dades segons la lliga.
+
+
+```{r}
+#recull d'histogrames de les variables
+fls <- ggplot(def_stats_df, 
+  aes(x= Fls ,fill = Liga)) +
+  geom_histogram(bins = 20) +
+  theme(axis.text.x=element_text(angle=0))
+
+fr <- ggplot(def_stats_df, 
+  aes(x= FR ,fill = Liga)) +
+  geom_histogram(bins = 20) +
+  theme(axis.text.x=element_text(angle=0))
+
+pa<- ggplot(def_stats_df, 
+  aes(x= PA ,fill = Liga)) +
+  geom_histogram(bins = 20) +
+  theme(axis.text.x=element_text(angle=0))
+
+XAG <- ggplot(def_stats_df, 
+  aes(x= X..Duelos.aéreos.ganados ,fill = Liga)) +
+  geom_histogram(bins = 20) +
+  theme(axis.text.x=element_text(angle=0))
+
+int <- ggplot(def_stats_df, 
+  aes(x= Int.x ,fill = Liga)) +
+  geom_histogram(bins = 20) +
+  theme(axis.text.x=element_text(angle=0))
+
+tkl <- ggplot(def_stats_df, 
+  aes(x= Derribos.Tkl ,fill = Liga)) +
+  geom_histogram(bins = 20) +
+  theme(axis.text.x=element_text(angle=0))
+
+tkl.dribles <- ggplot(def_stats_df, 
+  aes(x= Tkl..contra.dribles ,fill = Liga)) +
+  geom_histogram(bins = 20) +
+  theme(axis.text.x=element_text(angle=0))
+
+tkl.int <- ggplot(def_stats_df, 
+  aes(x= Tkl.Int ,fill = Liga)) +
+  geom_histogram(bins = 20) +
+  theme(axis.text.x=element_text(angle=0))
+
+desp <- ggplot(def_stats_df, 
+  aes(x= Desp. ,fill = Liga)) +
+  geom_histogram(bins = 20) +
+  theme(axis.text.x=element_text(angle=0))
+
+bloqueos<- ggplot(def_stats_df, 
+  aes(x= Bloqueos ,fill = Liga)) +
+  geom_histogram(bins = 20) +
+  theme(axis.text.x=element_text(angle=0))
+
+recup <- ggplot(def_stats_df, 
+  aes(x= Recup. ,fill = Liga)) +
+  geom_histogram(bins = 20) +
+  theme(axis.text.x=element_text(angle=0))
+
+grid.arrange(pa + ggtitle(""),
+             fls + ggtitle(""),
+             fr + ggtitle(""),
+             XAG + ggtitle(""),
+             ncol = 2,
+             top = textGrob("Histograma de les variables segons la lliga",
+                            gp=gpar(fontsize=15))
+             )
+```
+
+> Podem comprovar com les distribucions són molt similars entre les dues lligues, només pel % de aeris gunyats veiem com la distribució de la Premier és més plana entre el 30 i el 70% aproximadament el que vol dir que hi ha més variabiliat.
+
+```{r}
+grid.arrange(int + ggtitle(""),
+             tkl + ggtitle(""),
+             tkl.dribles + ggtitle(""),
+             tkl.int + ggtitle(""),
+             ncol = 2,
+             top = textGrob("Histograma de les variables segons la lliga",
+                            gp=gpar(fontsize=15))
+             )
+```
+
+> De nou veiem distribucions molt similars per totes les variables menys pel % d'entrades exitoses, on, altre vegada, la Premier mostra tenir més variabilitat.
+
+```{r}
+grid.arrange(desp + ggtitle(""),
+             bloqueos + ggtitle(""),
+             recup + ggtitle(""),
+             ncol = 2,
+             top = textGrob("Histograma de les variables segons la lliga",
+                            gp=gpar(fontsize=15))
+             )
+```
+
+> Per aquestes tres variables tenim una distribució semblant. En conclusió podriem dir que no hi ha diferencies entre les lligues excepte per les variables de % d'èxit de les accions, on aquests estan més distribuits per la Premier que no pas a la lliga.
+
+#### Matriu de correlacions
+
+> A continuació estudiarem la relació que hi ha entre cadascuna de les variables.
+
+```{r}
+res <- cor(def_stats_df[8:18])
+corrplot(res,type='lower',method="color",tl.col="black", tl.srt=30,
+   number.cex=0.75,sig.level = 0.01, addCoef.col = "black")
+```
+
+> Podem veure com hi ha bones correlacions entre les variables d'estudi i que fins hi tot algunes correlacionen molt bones  (>0.8) el que suggereix que és probable que poguem reduïr la dimensionalitat de les dades. Per fer-ho, aplicarem la descomposició per valors singulars (SVD). També destaquem que les faltes rebudes i els fores de joc correlacionen negativament amb la resta de variables.
+
+### Conclusions de l'anàlisi exploratori
+
+>* El % d'entrades exitoses i duels aeris guanyats és superior als defenses respecte a les altres dues posicions.
+* A pesar de ser els que més accions defensives realitzen, no hi ha diferencies en les faltes comeses respecte als migcampistes o defensors.
+* Els defenses son els que més pilotes refusen però la seva distribució és ample i plana, no s'aglutinen sobre un valor central.
+* Els jugadors que tenen una posició secundària com a defenses realitzen més accions defensives que els jugadors amb posicions secundàries com a davanters o migcampistes.
+* La distribució de jugadors entre les dues lligues és equitativa, així com la distribució per posicions principals. No és així per posicions secundàries, on a la Premier hi ha més defensors i menys davanters. Aquestes conclusions s'han d'agafar amb precaució ja que només disposem de 203 registres de posició secundària.
+* A la Premier League hi ha més variabilitat en el % de duels aeris guanyats i d'entrades realitzades amb èxit.
+* Els fores de joc i les faltes rebudes segurament no són característiques pròpies dels jugadors defensius ja que trobem una correlació negativa.
+* Hi ha bones correlacions entre les diferents variables que poden facilitar el fet de reduir el rang de les dades mitjançant mètodes com el SVD.
+
+
+## Reducció de la dimensionalitat (SVD)
+
+SVD és una tècnica de factorització de matrius que permet descompondre una matriu **A** en altres matrius **U**, **S**, **V**:
+
+$$
+SVD(A)=USV^t
+$$
+
+```{r}
+# escalem les dades per tenir mitjana 0 i variança 1
+A <- as.matrix(scale(def_stats_df[8:18]))
+```
+
+* La matriu **A** pot ser quadrada o rectangular i tindrà una dimensionalitat de *nxm*, on *n* representa el nombre dobservacions i *m* representa el nombre de característiques.
+
+* La matriu **U** serà una matriu ortogonal de dimensionalitat *nxn*.
+
+* La matriu **Vt** serà una matriu ortogonal de dimensionalitat *mxm*.
+
+* Finalment, la matriu **S** serà una matriu diagonal de dimensions *nxm* que contindrà els valors singulars posats en ordre decreixent.
+
+Com a conseqüència de que els valors singulars de la matriu **S** estiguin ordenats de forma decreixent s'obté una propietat molt important aplicada a aquestes matrius i és que es pot reduir el nombre de valors singulars *n* de la matriu **S** als primers *k valors* (components) substituint la resta per zero per obtenir una aproximació d'**A**. Al realitzar aquesta substitució les matrius passen a tenir:
+
+**U’** dimensió de *nxk*
+
+**S’** dimensió de *kxk*
+
+**Vt’** dimensió de *kxm*
+
+```{r}
+A.svd <- svd(A)
+
+U <- A.svd$u
+S <- A.svd$d
+Vt <- A.svd$v
+```
+
+Ara per elegir el nombre de components hem saber el *pes* de cada valor singluar de la matriu **S**. Per això calculem la suma acumulada de quadrats dels valors singulars per cada component. Això seria el que denominariem variança explicada.
+
+```{r}
+# Variança explicada per cada component
+cumsum(prop.table(S^2))
+```
+
+
+```{r}
+# plot
+plot(cumsum(prop.table(S^2)), pch=20, col = "red", cex = 1.5, xlab='n_components', ylab='variança explicada', main = "Elecció de components")
+lines(x = c(0,100), y = c(.90, .90))
+```
+
+## Construcció del conjunt de dades final
+
+> Com hem comentat, utilitzarem com a variable resposta les etiquetes de la posició secundària per les observacions en que es correspongui amb defensa, i la principal en la resta d'observacions. Com a dataset final utilitzarem les 7 primeres components del procés de SVD.
+
+```{r}
+
+# inputem el valor de la posició secundaria si és defensor
+for(i in 1:nrow(def_stats_df)) {
+  if(def_stats_df[i,'Posc2'] == 'DF'){
+    def_stats_df[i,'Posc'] = def_stats_df[i,'Posc2']
+  }
+}
+
+data_model <- U[ ,1:7]%*%diag(S[1:7])%*%Vt[1:7,1:7]
+response <- def_stats_df$Posc
+```
+
+## Conclusions Finals
+
+> Després del procés de neteja, exploració i reducció de la dimensionalitat, hem aconseguit reduïr un dataset de 1040 observacions i 18 variables a un de 803 observacions i 7 variables. El datset està preparat per construir el model que estimem oportú.
+
+
+
+******
+## Bibliogrfia
+******
+  +[FBREF](https://fbref.com/es)
+  + [SVD](https://rpubs.com/aaronsc32/singular-value-decomposition-r)
+  + [SVD](https://www.displayr.com/singular-value-decomposition-in-r/)
+
+******
+
+# Creació de models
+
+```{r message= FALSE, warning=FALSE}
+if (!require('patchwork')) install.packages('patchwork');library(patchwork)
+if (!require('glue')) install.packages('glue');library(glue)
+if (!require('here')) install.packages('here');library(here)
+if (!require('factoextra')) install.packages('factoextra');library(factoextra)
+if (!require('purrr')) install.packages('purrr');library(purrr)
+if (!require('NbClust')) install.packages('NbClust');library(NbClust)
+if (!require('cluster')) install.packages('cluster');library(cluster)
+if (!require('dbscan')) install.packages('dbscan'); library('dbscan')
+if (!require('cvms')) install.packages('cvms'); library(cvms)
+if(!require('rpart'))install.packages('rpart');library(rpart)
+if(!require('rpart.plot'))install.packages('rpart.plot');library(rpart.plot)
+if (!require('forcats')) install.packages('forcats'); library(forcats)
+```
+
+## Models d'aprenentatge no supervisats
+
+### Models basats en la distància.
+
+```{r}
+euclidean_matrix <- daisy(data_model, metric='euclidean')
+
+kmeans_flex <- function (k) {
+  data_kmeans <- kmeans(as.matrix(euclidean_matrix), k) 
+  fviz_cluster(data_kmeans, geom = "point", data = data_model) +
+  labs(title = glue("{k} clusters")) +
+  theme (
+    plot.background = element_blank(),
+    panel.background = element_blank(),plot.title = element_text (
+      margin = margin(0,0,5,0), hjust = 0.5, size = 12, color = "grey"),
+    legend.text = element_text(hjust = 0, size = 8),
+    legend.position = "none",
+    legend.title = element_text(size = 8),
+    axis.title = element_text (size = 8),
+    axis.text = element_text (size = 8)
+  )
+  }
+
+cluster_possibles <- map (1:9, kmeans_flex)
+   
+cluster_possibles[[1]] + cluster_possibles[[2]] + cluster_possibles[[3]] +
+  cluster_possibles[[4]] + cluster_possibles[[5]] + cluster_possibles[[6]] +
+  cluster_possibles[[7]] + cluster_possibles[[8]] + cluster_possibles[[9]] +
+  plot_annotation (
+    title = "Kmeans Clustering dels jugadors segons el potencial nombre de clusters \U0022k\U0022 ",
+    theme = theme (
+      plot.title = element_text(hjust = 0.5, vjust = 0.5, size = 14, face = "bold", margin = margin (0,0,20,0)),
+      plot.caption = element_text (hjust = 1, size = 7, margin = margin (15,0,0,0))
+      )
+    )
+```
+
+> Veiem com la densitat de les observacions és molt concentrada i a simple vista no podem preveure el nombre de clústers a elegir. D'entrada tenim 3 etiquetes a la variable resposta, lo que ens fa descartar k=2. Observant els gràfics podriem elegir des de k=3 a k=5 per el nostre model. Si l'algorisme ens separa en subgrups alguna etiqueta, la podriem canviar manualment. Per elegir k utilitzarem els mètodes de Silhouette i la suma de mínims quadrats.
+
+```{r}
+methodologies <- c("wss", "silhouette")
+   
+cluster_optimal <- map (methodologies, ~fviz_nbclust (as.matrix(euclidean_matrix), kmeans, method = .x))
+
+cluster_optimal[2]
+```
+
+> Ens indica k=2, però, com hem comentat, aquesta opció la descartam. Provem amb la suma de mínims quadrats.
+
+```{r}
+cluster_optimal[1]
+```
+
+> El nombre k idoni seria 5. Sabem que tenim 3 categories, per tant; per poder elegir k=4 o k=5, o bé les subdivisions dels grups son clares, i podem canviar les etiquetes manualment, o bé, els clústers 4 i 5 son poc nombrosos i influeixen poc a l'avaluació del model. Visualitzem les classificacions del model per k=3,k=4 i k=5.
+
+```{r}
+set.seed(345)
+euc.modelk3 <- kmeans(as.matrix(euclidean_matrix),3)
+euc.modelk4 <- kmeans(as.matrix(euclidean_matrix),4)
+euc.modelk5 <- kmeans(as.matrix(euclidean_matrix),5)
+
+pairs(data_model, col = as.factor(euc.modelk3$cluster), main= "Classificació k.means k=3", oma=c(2,2,2,12))
+par(xpd=TRUE)
+legend("right", fill=as.factor(unique(euc.modelk3$cluster)), legend = unique(euc.modelk3$cluster))
+pairs(data_model, col = as.factor(euc.modelk4$cluster), main= "Classificació k.means k=4", oma=c(2,2,2,12))
+par(xpd=TRUE)
+legend("right", fill=as.factor(unique(euc.modelk4$cluster)), legend = unique(euc.modelk4$cluster))
+pairs(data_model, col = as.factor(euc.modelk5$cluster), main= "Classificació k.means k=5", oma=c(2,2,2,12))
+par(xpd=TRUE)
+legend("right", fill=as.factor(unique(euc.modelk5$cluster)), legend = unique(euc.modelk5$cluster))
+```
+
+> Ara visualtizem la classificació real
+
+```{r}
+pairs(data_model, col = as.factor(response), main= "Classificació real", oma=c(2,2,2,12))
+par(xpd=TRUE)
+legend("right", fill=unique(response), legend = c(levels(response)))
+```
+
+> A la classificació real podem veure com a les categories de defensa i migcampista, les observacions es separen clarament per colors i no es barrejen massa entre elles. Les observacions dels davanters sí que es mesclen amb les dues altres categories a vàries variables. Si comparem amb els gràfics per k=4 i k=5, comprovem com per unes variables les etiquetes 4 i 5 es corresponen amb diferents categories segons la variable, per lo qual no podem canviar l'etiqueta corresponent.
+
+### S'analitzen, mostren i comenten les mesures de qualitat del model generat.
+
+> Anem a veure com es comporta el model amb els diferents k proposats. Utilitzarem les mètriques de Precision, Recall, Accuracy i F1-score.
+
+**Nombre d'observcions classificades correctes pel model (OC)**
+
+**Nombre d'observacions incorrectes (OI)**
+
+**Nombre d'observacions que pertanyen realment a la categoria (CR)**
+
+**Nombre d'observacions classificades a cada categoria pel model(OT)**
+
+**Precision = OC/OT**
+
+**Recall = OC/CR**
+
+**Accuracy = sum(OC)/sum(CR)**
+
+**F1Score= 2((precision x recall)/(precision+recall))**
+
+```{r}
+# k = 3
+
+k3.1.correct <- sum((as.numeric(response) == 1) & (euc.modelk3$cluster == as.numeric(response)))
+k3.1.incorrect <- sum(as.numeric(response) == 1) - k3.1.correct
+k3.2.correct <- sum((as.numeric(response) == 2) & (euc.modelk3$cluster== as.numeric(response)))
+k3.2.incorrect <- sum(as.numeric(response) == 2) - k3.2.correct
+k3.3.correct <- sum((as.numeric(response) == 3) & (euc.modelk3$cluster == as.numeric(response)))
+k3.3.incorrect <- sum(as.numeric(response) == 3) - k3.3.correct
+
+k3.euc.eval.model <- tibble(cluster = c('DL','DF','CC'),
+                    correcte = c(k3.1.correct, k3.2.correct, k3.3.correct),
+                    incorrecte = c(k3.1.incorrect, k3.2.incorrect, k3.3.incorrect),
+                    real = c(sum(as.numeric(response) == 1), sum(as.numeric(response) == 2),
+                             sum(as.numeric(response) == 3)),
+                    classificat = c(sum(euc.modelk3$cluster == 1 ), 
+                                    sum(euc.modelk3$cluster == 2),
+                                   sum(euc.modelk3$cluster == 3))) %>% 
+  mutate(precision = correcte/classificat,
+         recall =correcte/real,
+         accuracy = sum(correcte)/sum(real)) %>% 
+  mutate(f1score =2.0*((precision*recall)/(precision+recall)))
+
+k3.euc.eval.model
+```
+
+> Veiem com el model en general té una Exactitud (Accuracy) del 68.24%, per lo que no el podriem considerar com a bò, però estariem aprop (considerant com a bò un model per sobre del 70% d'exactitud). En canvi, el model sí és bò per classificar els migcampistes i es comporta excel·lentment per la mètrica precision, és a dir, quan classifica un migcampista, ho sol fer correctament (un 84% de les vegades). El model és en general bò per classificar els defenses i pobre per classificar els davanters. Aquesta darrea opció ja la prevèiem analitzant les dades prèviament, donada la difèrencia de perfils entre els jugadors classificats com a davanters per aquestes estadístiques. Per altra banda, sí és sorprenent que el model classifiqui millor als migcampistes que als defensors amb les variables treballades. Això es podria haver donat al canviar les etiquetes principals de CC a DF quan les secundàries eren DF.
+
+```{r}
+# k = 3
+
+k4.1.correct <- sum((as.numeric(response) == 1) & (euc.modelk4$cluster == as.numeric(response)))
+k4.1.incorrect <- sum(as.numeric(response) == 1) - k4.1.correct
+k4.2.correct <- sum((as.numeric(response) == 2) & (euc.modelk4$cluster== as.numeric(response)))
+k4.2.incorrect <- sum(as.numeric(response) == 2) - k4.2.correct
+k4.3.correct <- sum((as.numeric(response) == 3) & (euc.modelk4$cluster == as.numeric(response)))
+k4.3.incorrect <- sum(as.numeric(response) == 3) - k4.3.correct
+
+k4.euc.eval.model <- tibble(cluster = c('DL','DF','CC'),
+                    correcte = c(k4.1.correct, k4.2.correct, k4.3.correct),
+                    incorrecte = c(k4.1.incorrect, k4.2.incorrect, k4.3.incorrect),
+                    real = c(sum(as.numeric(response) == 1), sum(as.numeric(response) == 2),
+                             sum(as.numeric(response) == 3)),
+                    classificat = c(sum(euc.modelk4$cluster == 1 ), 
+                                    sum(euc.modelk4$cluster == 2),
+                                   sum(euc.modelk4$cluster == 3))) %>% 
+  mutate(precision = correcte/classificat,
+         recall =correcte/real,
+         accuracy = sum(correcte)/sum(real)) %>% 
+  mutate(f1score =2.0*((precision*recall)/(precision+recall)))
+
+k4.euc.eval.model
+```
+
+> Aquest model dona uns resultats molt pobres. Sí és cert que és un model molt fiable en quant a la classificació dels defensors. Quan el model classifica un defensor ho fa amb una precisió del 92% tot i que es deixa molts defensors sense classificar. És un model espantòs per classificar davanters i migcampistes. En general és un mal model ja que descarta molts jugadors en la classsificació.
+
+```{r}
+k5.1.correct <- sum((as.numeric(response) == 1) & (euc.modelk5$cluster == as.numeric(response)))
+k5.1.incorrect <- sum(as.numeric(response) == 1) - k5.1.correct
+k5.2.correct <- sum((as.numeric(response) == 2) & (euc.modelk5$cluster== as.numeric(response)))
+k5.2.incorrect <- sum(as.numeric(response) == 2) - k5.2.correct
+k5.3.correct <- sum((as.numeric(response) == 3) & (euc.modelk5$cluster == as.numeric(response)))
+k5.3.incorrect <- sum(as.numeric(response) == 3) - k5.3.correct
+
+k5.euc.eval.model <- tibble(cluster = c('DL','DF','CC'),
+                    correcte = c(k5.1.correct, k5.2.correct, k5.3.correct),
+                    incorrecte = c(k5.1.incorrect, k5.2.incorrect, k5.3.incorrect),
+                    real = c(sum(as.numeric(response) == 1), sum(as.numeric(response) == 2),
+                             sum(as.numeric(response) == 3)),
+                    classificat = c(sum(euc.modelk5$cluster == 1 ), 
+                                    sum(euc.modelk5$cluster == 2),
+                                   sum(euc.modelk5$cluster == 3))) %>% 
+  mutate(precision = correcte/classificat,
+         recall =correcte/real,
+         accuracy = sum(correcte)/sum(real)) %>% 
+  mutate(f1score =2.0*((precision*recall)/(precision+recall)))
+
+k5.euc.eval.model
+```
+
+> Aquest model és molt similar a l'anterior però en aquest cas és molt precís amb la classificació dels migcampistes. El model descarta molts jugadors degut a la seva classificació com a clústers 4 i 5 i dona molt mals resultats. Tot i així, és un model millor que l'anterior.
+
+### S'interpreten els resultats i comenten les conclusions.
+
+```{r}
+kmeans.euc.sum <- tibble(model = c('k=3','k=4','k=5'),
+                       correcte =c(sum(k3.euc.eval.model$correcte),sum(k4.euc.eval.model$correcte),
+                                   sum(k5.euc.eval.model$correcte)),
+                       incorrecte = c(sum(k3.euc.eval.model$incorrecte),sum(k4.euc.eval.model$incorrecte),
+                                      sum(k5.euc.eval.model$incorrecte)),
+                       real = c(sum(k3.euc.eval.model$real),sum(k4.euc.eval.model$real),sum(k5.euc.eval.model$real)),
+                       classificat = c(sum(k3.euc.eval.model$classificat),sum(k4.euc.eval.model$classificat),
+                                       sum(k5.euc.eval.model$classificat)))%>% 
+  mutate(accuracy =correcte/real)
+
+kmeans.euc.sum
+```
+
+
+> El millor model l'obtenim per k=3 amb un Accuracy del 68.24% seguit de k=5 amb 43.33% i k=4 amb 36.23%. A nivell general cap dels 3 models podria  ser considerat com un bon model. Veiem com els models k=4 i k=5 deixen molts jugadors sense classificar. Ara bé, si parlem de la confiança en la classificació, tenim que els models k=4 i k=5 són més fiables en la classificació de defenses i migcampistes respectivament, ja que quan classifiquen un jugador en aquesta posició, ho fan amb major precisió que el k=3, tot i que es deixen més jugadors sense classificar. 
+
+> Com a conclusió podem dir que el model per k=3 ens serveix per fer una bona classificació dels defensors i els migcampistes amb les mètriques seleccionades, el que era el nostre principal objectiu al principi de la pràctica. Els davanters ón els jugadors amb un perfil més divers respecte a les mètriques seleccionades el que impedeix la seva correcta classificació.
+
+***
+
+
+
+### Es genera de nou el model no supervisat anterior, però usant una mètrica de distància diferent.
+
+> Utilitzarem la distància Manhattan per generar un model k=3.
+
+```{r}
+manhattan_matrix <- daisy(data_model, metric='manhattan')
+
+set.seed(345)
+man.modelk3 <- kmeans(as.matrix(manhattan_matrix),3)
+
+pairs(data_model, col = as.factor(man.modelk3$cluster), main= "Classificació k.means k=3", oma=c(2,2,2,12))
+par(xpd=TRUE)
+legend("right", fill=as.factor(unique(man.modelk3$cluster)), legend = unique(man.modelk3$cluster))
+```
+
+> Visualment es veu molt similar al model de distància euclídia.
+
+### Es mostren i comenten les mesures de qualitat del model generat.
+
+```{r}
+# k = 3
+
+k3.1.correct <- sum((as.numeric(response) == 1) & (man.modelk3$cluster == as.numeric(response)))
+k3.1.incorrect <- sum(as.numeric(response) == 1) - k3.1.correct
+k3.2.correct <- sum((as.numeric(response) == 2) & (man.modelk3$cluster== as.numeric(response)))
+k3.2.incorrect <- sum(as.numeric(response) == 2) - k3.2.correct
+k3.3.correct <- sum((as.numeric(response) == 3) & (man.modelk3$cluster == as.numeric(response)))
+k3.3.incorrect <- sum(as.numeric(response) == 3) - k3.3.correct
+
+k3.man.eval.model <- tibble(cluster = c('DL','DF','CC'),
+                    correcte = c(k3.1.correct, k3.2.correct, k3.3.correct),
+                    incorrecte = c(k3.1.incorrect, k3.2.incorrect, k3.3.incorrect),
+                    real = c(sum(as.numeric(response) == 1), sum(as.numeric(response) == 2),
+                             sum(as.numeric(response) == 3)),
+                    classificat = c(sum(man.modelk3$cluster == 1 ), 
+                                    sum(man.modelk3$cluster == 2),
+                                   sum(man.modelk3$cluster == 3))) %>% 
+  mutate(precision = correcte/classificat,
+         recall =correcte/real,
+         accuracy = sum(correcte)/sum(real)) %>% 
+  mutate(f1score =2.0*((precision*recall)/(precision+recall)))
+
+k3.man.eval.model
+```
+
+> A nivell general podem declarar el model com a bò, ja que obtenim un 70.48% d'exactitud o accuracy. El model és un bon classificador per defenses i migcampistes i un pobre classificador per davanters. Per les categories de defenses i migcampistes el model és molt bò quan classifica un jugador en aquestes categories (precision) però es deixen jugadors per classificar, el que fa que disminueixi la mètrica recall (al contrari que per davanters, que augmenta).
+
+### Addicionalment es comparen els dos models no supervisats amb mètriques de distància diferents.
+
+```{r}
+kmeans.sum <- tibble(model = c('Euclidean','Manhattan'),
+                       correcte =c(sum(k3.euc.eval.model$correcte),sum(k3.man.eval.model$correcte)),
+                       incorrecte = c(sum(k3.euc.eval.model$incorrecte),sum(k3.man.eval.model$incorrecte)),
+                       real = c(sum(k3.euc.eval.model$real),sum(k3.man.eval.model$real)),
+                       classificat = c(sum(k3.euc.eval.model$classificat),sum(k3.man.eval.model$classificat)))%>% 
+  mutate(
+         accuracy =correcte/real)
+
+kmeans.sum
+```
+
+> Com podem veure a nivell general el model amb distància manhattan és millor ja que té un grau d'exactitud lleugerament més elevat. Ambdós classificadors són bons per defenses i migcampistes, perdent una mica de precisió (però no de recall), el model manhattan respecte al euclidean per lo que a migcampistes es refereix degut a que el manhattan classifca més jugadors per aquesta categoria. El model manhattan té millors mètriques de precision per la classificació dels defensors, però no de recall, ja que en classifca menys. Ambdós models són pobres classificant davanters, però el manhattan ofereix millors mètriques en aquest sentit.
+
+### S'interpreten els resultats i comenten les conclusions.
+
+> El model obtingut amb kmeans amb 3 centroides i distància Manhattan proporciona una molt bona classificació per les posicions de defensa i migcampista. Per aquest i tots els altres models les mètriques de classificació per la posició de davanter són molt pobres. Això, ens fa pensar que les variables escollides per aquest estudi són suficientment representatives per catalogar un jugador com a defensa o migcampista, però no com a davanter ja que aquest grup és molt heterogeni per les variables seleccionades. Això, si més no, ens podria servir per catalogar davanters amb comportaments 'defensius'.
+
+> Sorprenentment, la posició millor classificada pels models és la de migcampista, quan en teoria, les dades utilitzades representen variables 'defensives'. Tal vegada les variables escollides al principi del procés EDA no han estat les millors i podriem haver escollit una combinació de variables millor per la classificació dels defenses. Altre opció és el canvi d'etiquetatge realitzat al final de l'EDA quan es va canviar la posició principal a DF a tots els jugadors amb etiquetatge secundari DF. Això, pot haver provocat el petit desbalanç a favor de l'etiquetatge de la posició migcampista. Finalment, al no tractar-se d'un dataset balancejat, es pot haver produït el desajust per aquest motiu i es podria resoldre balancejant-lo (degut a la petita quantitat de dades del dataset no s'ha realitzat aquest balanceig en aquest estudi).
+
+***
+
+### Models basats en densitat
+
+```{r}
+# calcularem el valor més adient d'eps mitjançant KNNdistplot localitzant del colze.
+kNNdistplot(data_model, k=ncol(data_model)+1) # k = dim + 1
+abline(h=2, lty= 2, col='red')
+# Veiem com el paramtre més adient per eps és 2 aproximadament
+
+res_dbscan <- dbscan(data_model, eps = 2 ,minPts = ncol(data_model)+1) # utilitzem el mateix valor per minPts que per k
+res_dbscan
+
+hullplot(data_model,res_dbscan)
+pairs(data_model, col = res_dbscan$cluster + 1L, main= "Classificació DBSCAN")
+pairs(data_model, col=as.factor(response), main= "Classificació real")
+```
+
+> Ja visualment comprovem com el model no és capaç de distingir les 3 posicions i només agrupa un sol clúster. Per epsilon= 2 i minPts = dim + 1 ens genera un sol clúster i es descarten 9 observacions.
+
+### Es proven, descriuen i interpreten els resultats amb diferents valors d'eps.
+
+```{r}
+res_dbscan2 <- dbscan(data_model, eps = 1.5 ,minPts = ncol(data_model)+1) # utilitzem el mateix valor per minPts que per k
+res_dbscan2
+
+hullplot(data_model,res_dbscan2)
+pairs(data_model, col = res_dbscan2$cluster + 1L, main= "Classificació DBSCAN")
+```
+
+> Per epsilon= 1.5 i minPts = dim + 1 ens genera un sol clúster i es descarten 29 observacions.
+
+```{r}
+res_dbscan3 <- dbscan(data_model, eps = 3 ,minPts = ncol(data_model)*2) # 
+res_dbscan3
+
+hullplot(data_model,res_dbscan3)
+pairs(data_model, col = res_dbscan3$cluster + 1L, main= "Classificació DBSCAN")
+```
+
+> Per epsilon= 3 i minPts = dim *2 ens genera un sol clúster i es descarten 29 observacions. Ara utilitzarem OPTICS per generar un altre model.
+
+```{r}
+res_optics <- optics(data_model, minPts = 30)
+### Extracció d'un clústering DBSCAN tallant l'accessibilitat en el valor eps_cl = 1.15
+res_opt_dbscan <- extractDBSCAN(res_optics, eps_cl = 1.15)
+res_opt_dbscan
+plot(res_opt_dbscan)
+hullplot(data_model,res_opt_dbscan)
+pairs(data_model, col = res_opt_dbscan$cluster + 1L, main= "Classificació OPTICS-DBSCAN")
+```
+
+> Per epsilon= 1.15 i minPts = 30 (bastant més petit que la posició amb menys jugadors) ens genera dos petits clústers descartant 482 observacions.
+
+### S'obté una mesura de com és de bo l'agrupament.
+```{r}
+dbscan.1.correct <- sum((as.numeric(response) == 1) & (res_dbscan$cluster == as.numeric(response)))
+dbscan.1.incorrect <- sum(as.numeric(response) == 1) - dbscan.1.correct
+dbscan.2.correct <- sum((as.numeric(response) == 2) & (res_dbscan$cluster== as.numeric(response)))
+dbscan.2.incorrect <- sum(as.numeric(response) == 2) - dbscan.2.correct
+dbscan.3.correct <- sum((as.numeric(response) == 3) & (res_dbscan$cluster == as.numeric(response)))
+dbscan.3.incorrect <- sum(as.numeric(response) == 3) - dbscan.3.correct
+
+dbscan.eval.model <- tibble(cluster = c('DL','DF','CC'),
+                    correcte = c(dbscan.1.correct, dbscan.2.correct, dbscan.3.correct),
+                    incorrecte = c(dbscan.1.incorrect, dbscan.2.incorrect, dbscan.3.incorrect),
+                    real = c(sum(as.numeric(response) == 1), sum(as.numeric(response) == 2),
+                             sum(as.numeric(response) == 3)),
+                    classificat = c(sum(res_dbscan$cluster == 1 ), 
+                                    sum(res_dbscan$cluster == 2),
+                                   sum(res_dbscan$cluster == 3))) %>% 
+  mutate(precision = correcte/classificat,
+         recall =correcte/real,
+         accuracy = sum(correcte)/sum(real)) %>% 
+  mutate(f1score =2.0*((precision*recall)/(precision+recall)))
+
+dbscan.eval.model <- dbscan.eval.model %>% replace(is.na(.),0)
+
+dbscan.eval.model
+```
+
+> Veiem com és un model incapaç de fer cap classsificació.
+
+```{r}
+dbscan2.1.correct <- sum((as.numeric(response) == 1) & (res_dbscan2$cluster == as.numeric(response)))
+dbscan2.1.incorrect <- sum(as.numeric(response) == 1) - dbscan2.1.correct
+dbscan2.2.correct <- sum((as.numeric(response) == 2) & (res_dbscan2$cluster== as.numeric(response)))
+dbscan2.2.incorrect <- sum(as.numeric(response) == 2) - dbscan2.2.correct
+dbscan2.3.correct <- sum((as.numeric(response) == 3) & (res_dbscan2$cluster == as.numeric(response)))
+dbscan2.3.incorrect <- sum(as.numeric(response) == 3) - dbscan2.3.correct
+
+dbscan2.eval.model <- tibble(cluster = c('DL','DF','CC'),
+                    correcte = c(dbscan2.1.correct, dbscan2.2.correct, dbscan2.3.correct),
+                    incorrecte = c(dbscan2.1.incorrect, dbscan2.2.incorrect, dbscan2.3.incorrect),
+                    real = c(sum(as.numeric(response) == 1), sum(as.numeric(response) == 2),
+                             sum(as.numeric(response) == 3)),
+                    classificat = c(sum(res_dbscan2$cluster == 1 ), 
+                                    sum(res_dbscan2$cluster == 2),
+                                   sum(res_dbscan2$cluster == 3))) %>% 
+  mutate(precision = correcte/classificat,
+         recall =correcte/real,
+         accuracy = sum(correcte)/sum(real)) %>% 
+  mutate(f1score =2.0*((precision*recall)/(precision+recall)))
+
+dbscan2.eval.model <- dbscan2.eval.model %>% replace(is.na(.),0)
+dbscan2.eval.model
+```
+
+> Ídem del model anterior.
+
+```{r}
+dbscan3.1.correct <- sum((as.numeric(response) == 1) & (res_dbscan3$cluster == as.numeric(response)))
+dbscan3.1.incorrect <- sum(as.numeric(response) == 1) - dbscan3.1.correct
+dbscan3.2.correct <- sum((as.numeric(response) == 2) & (res_dbscan3$cluster== as.numeric(response)))
+dbscan3.2.incorrect <- sum(as.numeric(response) == 2) - dbscan3.2.correct
+dbscan3.3.correct <- sum((as.numeric(response) == 3) & (res_dbscan3$cluster == as.numeric(response)))
+dbscan3.3.incorrect <- sum(as.numeric(response) == 3) - dbscan3.3.correct
+
+dbscan3.eval.model <- tibble(cluster = c('DL','DF','CC'),
+                    correcte = c(dbscan3.1.correct, dbscan3.2.correct, dbscan3.3.correct),
+                    incorrecte = c(dbscan3.1.incorrect, dbscan3.2.incorrect, dbscan3.3.incorrect),
+                    real = c(sum(as.numeric(response) == 1), sum(as.numeric(response) == 2),
+                             sum(as.numeric(response) == 3)),
+                    classificat = c(sum(res_dbscan3$cluster == 1 ), 
+                                    sum(res_dbscan3$cluster == 2),
+                                   sum(res_dbscan3$cluster == 3))) %>% 
+  mutate(precision = correcte/classificat,
+         recall =correcte/real,
+         accuracy = sum(correcte)/sum(real)) %>% 
+  mutate(f1score =2.0*((precision*recall)/(precision+recall)))
+
+dbscan3.eval.model <- dbscan3.eval.model %>% replace(is.na(.),0)
+dbscan3.eval.model
+```
+
+> Ídem però al tenir un epsilon més elevat, no genera outliers per lo que etiqueta correctament tots els davanters (recall=1) però és un model ineficaç totalment.
+
+```{r}
+res_opt_dbscan.1.correct <- sum((as.numeric(response) == 1) & (res_opt_dbscan$cluster == as.numeric(response)))
+res_opt_dbscan.1.incorrect <- sum(as.numeric(response) == 1) - res_opt_dbscan.1.correct
+res_opt_dbscan.2.correct <- sum((as.numeric(response) == 2) & (res_opt_dbscan$cluster== as.numeric(response)))
+res_opt_dbscan.2.incorrect <- sum(as.numeric(response) == 2) - res_opt_dbscan.2.correct
+res_opt_dbscan.3.correct <- sum((as.numeric(response) == 3) & (res_opt_dbscan$cluster == as.numeric(response)))
+res_opt_dbscan.3.incorrect <- sum(as.numeric(response) == 3) - res_opt_dbscan.3.correct
+
+res_opt_dbscan.eval.model <- tibble(cluster = c('DL','DF','CC'),
+                    correcte = c(res_opt_dbscan.1.correct, res_opt_dbscan.2.correct, res_opt_dbscan.3.correct),
+                    incorrecte = c(res_opt_dbscan.1.incorrect, res_opt_dbscan.2.incorrect, res_opt_dbscan.3.incorrect),
+                    real = c(sum(as.numeric(response) == 1), sum(as.numeric(response) == 2),
+                             sum(as.numeric(response) == 3)),
+                    classificat = c(sum(res_opt_dbscan$cluster == 1 ), 
+                                    sum(res_opt_dbscan$cluster == 2),
+                                   sum(res_opt_dbscan$cluster == 3))) %>% 
+  mutate(precision = correcte/classificat,
+         recall =correcte/real,
+         accuracy = sum(correcte)/sum(real)) %>% 
+  mutate(f1score =2.0*((precision*recall)/(precision+recall)))
+
+res_opt_dbscan.eval.model <- res_opt_dbscan.eval.model %>% replace(is.na(.),0)
+res_opt_dbscan.eval.model
+```
+
+> Aquest model almenys ens genera dos clústers i és capaç d'obtenir una molt bona precissió pels defenses, lo que al no classificar-ne molts, dona un recall i f1score pobres. El segon clúster pertany als davanters i no és capaç de classsificar els migcampistes
+
+### Es comparen els resultats obtinguts dels models anteriors i DBSCAN.
+
+```{r}
+non.sup.models.sum <- tibble(model = c('kmeans3.Euc','kmeans3.Man', 'dbscan', 'dbscan2','dbscan3','optics-dbscan'),
+                       correcte =c(sum(k3.euc.eval.model$correcte),sum(k3.man.eval.model$correcte),
+                                   sum(dbscan.eval.model$correcte),sum(dbscan2.eval.model$correcte),
+                                   sum(dbscan3.eval.model$correcte),sum(res_opt_dbscan.eval.model$correcte)),
+                       incorrecte = c(sum(k3.euc.eval.model$incorrecte),sum(k3.man.eval.model$incorrecte),
+                                      sum(dbscan.eval.model$incorrecte),sum(dbscan2.eval.model$incorrecte),
+                                      sum(dbscan3.eval.model$incorrecte), sum(res_opt_dbscan.eval.model$incorrecte)),
+                       real = c(sum(k3.euc.eval.model$real),sum(k3.man.eval.model$real),
+                                sum(dbscan.eval.model$real),sum(dbscan2.eval.model$real),
+                                sum(dbscan3.eval.model$real),sum(res_opt_dbscan.eval.model$real)),
+                       classificat = c(sum(k3.euc.eval.model$classificat),sum(k3.man.eval.model$classificat),
+                                       sum(dbscan.eval.model$classificat),sum(dbscan2.eval.model$classificat),
+                                       sum(dbscan3.eval.model$classificat), sum(res_opt_dbscan.eval.model$classificat)))%>% 
+  mutate(precision = correcte/classificat,
+         recall =correcte/real) %>% 
+  mutate(f1score =2.0*((precision*recall)/(precision+recall)))
+
+non.sup.models.sum
+```
+
+> Com podem veure el model amb millors paràmetres és el de kmeans amb 3 clústers i distància manhattan. El d'optics-bdscan obté millors valors de precision, ja que lo poc que classifica ho fa molt bé, però, al generar només dos clústers i classificar 321 observacions de 803 obté pobres resultats en recall i f1score. Els altres models de dbscan no són capaços de generar més d'un clúster i mostren resultats molt pobres.
+
+### Es comenten les conclusions.
+
+> Els algorismes basats en la densitat no són una bona opció per classificar les dades del dataset. Tal com hem vist als gràfics, no es distingeixen zones d'alta concentració d'observacions i altres amb baixa concentració, lo que provoca que l'algorisme no pugui treballar adequadament. Per aquest motiu, la informació extreta d'aquests models no és significativa i les conclusions romanen igual que a l'apartat anterior.
+
+### Identifica quines possibles limitacions tenen les dades que has seleccionat per obtenir conclusions amb els models utilitzats (no supervisats).
+
+>  Els models no supervisats es solen fer servir amb dades sense etiqueta, on no es coneix el resultat o la variable objectiu, per a tasques com ara l'agrupació, la reducció de la dimensionalitat i la detecció d'anomalies. En el nostre cas l'objectiu era classificar les dades segons una variable resposta, cosa que dificulta el treball del model. Per l'utilització d'aquests models haguès estat molt més interessant buscar perfils de jugadors en funció de les seves característiques i no en funció de la seva posició. També haguès estat interessant si haguessim tingut dades categòriques per fer agrupacions.
+
+> Altres limitacions dels models d'aprenentatge no supervisat aplicats al nostre dataset resideixen en els seus patrons bàsics de funcionament: la distància i la densitat. Com hem progut comprovar en les visualitzacions de les observacions, al no haver zones definides amb més densitat i altres amb menys, aquests models no podien funcionar correctament. 
+
+***
+
+## Models d'aprenentage supervisat
+
+### Arbres de decisió.
+
+> Generarem un model d'arbre de decisió amb el paquet c50. Primer definim un paràmetre (split_prop) que controla el split de manera dinàmica en el test i cream els grups train i test.
+
+```{r}
+set.seed(345)
+split_prop <- 3
+
+colnames(data_model) <- c('V1','V2','V3','V4','V5','V6','V7')
+indexes <-  sample(1:nrow(data_model), size=floor(((split_prop-1)/split_prop)*nrow(data_model)))
+trainX <- data_model[indexes,]
+trainy <- response[indexes]
+testX <- data_model[-indexes,]
+testy<- response[-indexes]
+```
+
+> Comprovem que no hi ha esbiaxos significatius a les mostres
+
+```{r}
+summary(trainX)
+summary(trainy)
+summary(testX)
+summary(testy)
+```
+
+> Els resums estadístics són força similars i la proporció d'etiquetes es manté estable entre els grups training i test. Generem el model amb el paquet C50 i obtenim les regles.
+
+```{r}
+set.seed(345)
+C50.model <- C50::C5.0(trainX, trainy, rules = TRUE)
+summary(C50.model)
+```
+
+> Pasam a comentar principals regles que afecten als migcampistes (amb probabilitat per damunt 0.9) i les que afecten a defensors i davanters.
+
+> Regla 1:  si	V2 és major a 0.2833458, V3 no es troba entre -0.5128801 i -0.8977078, V6 és igual o menor a 1.305797 i V7 és major a -0.451959, el jugador és un migcampista amb rpobabilitat 0.95.
+
+> Regla 2: si V1 és menor o igual a -0.5185113, V2 és major a 0.2833458, V3 és menor o igual a -0.5128801 i V7 és major a -0.1690515, el jugador és un migcampista amb probabilitat 0.917.
+
+> Regla 3: Si V3 és menor o igual a -0.5128801, V4 és menor o igual a -0.5176487, V6 és menor o igual a 1.305797 i V7 és major a -0.451959, el jugador és un migcampitsa amb probabilitat 0.917.
+
+> Regla 4: Si V1 és major a 0.05071595, V2 és major a 0.2833458, V5 és major a  -0.2644964, V6 és menor o igual a 1.305797 i V7 és major a -0.451959, el jugador és un migcampista amb probabilitat 0.917
+
+> Regla 5: si V2 és major a 0.2833458, V3 és menor o igual a -0.5128801 i V7 és major a 0.7726122, el jugador és un migcampista amb probabilitat 0.917
+
+> Regla 6: si V3 és menor o igual a -0.5128802, i V7 no es troba entre -0.451959 i -0.1690515, el jugador és un migcampista amb probabilitat 0.900
+
+> Regla 13: si V2 és major a -0.7042409, V3 a 1.203647, V5 és menor o igual a -0.6812438 i V6 és menor o igual 1.799738, el jugador és un defensa amb probabilitat 0.842
+
+> Regla 14: si V3 és major a  -0.5128801, el jugador és defensa amb una probabilitat de 0.663
+
+> Regla 15: si V3 és menor o igual a -0.512880, el jugador és davanter amb probabilitat 0.604.
+
+> Passem a fer una visualització de l'arbre
+
+```{r}
+set.seed(345)
+C50.model <- C50::C5.0(trainX, trainy)
+plot(C50.model,gp = gpar(fontsize = 5))
+
+```
+
+> Podem veure com a partir d'un node basat en la variable 3 es generen dues branques principals. Una amb 5 nivells i altre amb 10. Passem a veure com és la taxa d'error en la classificació cada nivell de l'arbre.
+
+### S'avalua la taxa d'error a cada nivell d'arbre, l'eficiència en classificació (a les fases de training, validació i test) i la comprensibilitat.
+
+```{r}
+summary(C50.model)
+```
+
+```{r}
+nivells <- c('n1','n2','n3','n4','n5','n6','n7','n8','n9','n10')
+pos <- c('DEF','CC','DL')
+taxa_error <- round(data.frame(rbind(c(NaN,4/154,4/49,0/3,3/28,NaN,0/4,NaN,NaN,NaN),
+                c(NaN,NaN,1/18,4/113,5/35,0/2,1/10,0/3,NaN,0/5),
+                c(NaN,15/126,NaN,1/11,0/2,0/3,NaN,NaN,0/5,0/2)), row.names = pos),3)
+colnames(taxa_error) <- nivells
+taxa_error
+```
+
+> Veiem com la majoria d'errors en la classificació s'agrupen entre les branques 2 i 5. La majoria de defenses queden classificats al arribar al nivell 4 amb una taxa d'error per sota del 9% (taxa d'error del model general) lo que podria significar una poda per aquest nivell si volguessim un model específic per la classificació d'aquesta posició. Pel que fa als migcampistes, pasa quelcom molt semblant, acumulant la taxa d'error més elevada al nivell 5 (seguida del nivell 7) el que fa pensar que el valor d'aquest node podria ser optimitzable. Pels davanters, la taxa d'error és superior a la del model general als nivells 2 (on es concentren la majoria de classificacions) i 4 el que ens fa pensar que per aquesta categoria l'algorisme té dificultats per fer una bona classificació.
+
+### Addicionalment es genera matriu de confusió per mesurar la capacitat predictiva de l'algorisme.
+
+>  A continuació passem a testejar el model generat. Farem una avaluació amb l'split creat anteriorment per aquesta funció i generarem una matriu de confusió per avaluar la classificació per cada etiqueta.
+
+```{r}
+predicted_model <- predict( C50.model, testX, type="class" )
+print(sprintf("La precisió de l'àrbre és: %.4f %%",100*sum(predicted_model == testy) / length(predicted_model)))
+```
+
+> La precisió del model és bona i entenem la pèrdua respecte al train (91%) com acceptable. No es pot esperar una precisió tant alta a la realitat. Visualitzem la matriu de confusió per avaluar la classificació per etiquetes. 
+
+```{r warning=FALSE}
+mat_conf<-table(testy,Predicted=predicted_model)
+cfm <- as_tibble(mat_conf)
+cm_model<-plot_confusion_matrix(cfm, 
+                      target_col = "testy", 
+                      prediction_col = "Predicted",
+                      counts_col = "n") + 
+  ggtitle('C50')
+cm_model
+```
+
+> A la matriu de confusió veiem com la categoria millor classificada són els defenses. De tots els defensors reals, el model en classifica 82.7% correctament, mentre dels que classifica com a defensors, el 83.5% son en realitat defensors. Els segons millors clasificats són els davanters. El model classifica el 79.2% de davanters de forma correcta, mentre que de tots els que classifica, el 75% son en realitat davanters. Pel que fa als migcampistes, el 60.5% són classificats correctament, mentre que de tots els classificats com a migcampistes, el 62.7% ho són realment. Com era d'esperar les posicions que menys es confonen són la de defensa i davanter. El model té les mateixes possibilitats de confondre un migcampista amb un defensa o amb un davanter.
+
+### Es comparen i interpreten els resultats (sense i amb opcions de poda o boosting), explicant els avantatges i inconvenients del model generat respecte a un altre mètode de construcció.
+
+> model amb boosting.
+
+```{r}
+C50.model2 <- C50::C5.0(trainX, trainy, trials = 10 )
+
+predicted_model2 <- predict( C50.model2, testX, type="class" )
+print(sprintf("La precisió de l'àrbre és: %.4f %%",100*sum(predicted_model2 == testy) / length(predicted_model2)))
+```
+
+> Amb el nou model comprovem com s'ha millorat quasi en 2 punts la precissió respecte al model anterior. Comparem un model amb l'altre mitjançant la matriu de confusió.
+
+```{r warning=FALSE}
+mat_conf2<-table(testy,Predicted=predicted_model2)
+cfm2 <- as_tibble(mat_conf2)
+cm_model2<-plot_confusion_matrix(cfm2, 
+                      target_col = "testy", 
+                      prediction_col = "Predicted",
+                      counts_col = "n",
+                      palette = 'Greens') + 
+  ggtitle('C50 amb boosting')
+grid.arrange(cm_model,cm_model2,
+             ncol=2)
+```
+
+> Comprovem com el model amb boosting millora en la classificació de defenses i migcampistes però empitjora en la de davanters. El nou model prediu millor si un jugador és migcampista, augmentant els vertaders positius i disminuint els falsos positius (65.1 i 36.3 respectivament). Els veritables positius en quant a defenses també han augmentat (86.4), però també ha augmentat lleugerament el de falsos positius (18.8%), és a dir que en classifica més. La categoria de davanters disminueix la seva precisió (75%), però també disminueix la de falsos positius (14.3%). Aquest nou model no confon davanters amb defenses. Passem a analitzar com utilitzen les variables proporcionades els models generats.
+
+```{r}
+usage_model <- C50::C5imp(C50.model, metric = 'usage')
+usage_model2 <- C50::C5imp(C50.model2, metric = 'usage')
+splits_model <- C50::C5imp(C50.model, metric = 'splits')
+splits_model2 <- C50::C5imp(C50.model2, metric = 'splits')
+
+model1 <- cbind(rownames(usage_model),usage_model$Overall, 'model C50')
+model2 <- cbind(rownames(usage_model2),usage_model2$Overall, 'model C50.Boosting')
+colnames(model1) <- c('variables','Overall', 'model')
+colnames(model2) <- c('variables','Overall', 'model')
+usage_models <- rbind.data.frame( model1,
+                          model2)
+#plot
+ggplot(usage_models, aes(x = as.numeric(Overall), y = variables, fill = model)) + 
+  geom_bar(stat='identity') +
+  xlab('Overall') + ylab('Variables') + 
+  ggtitle('Comparació utilització de les variables') + 
+  facet_grid(~model) +
+  theme(legend.position = "none") 
+
+```
+
+> Ambdós models utilitzen totes les variables però al C50 només V7 i V3 s'utilitzen a totes les branques de l'arbre. Pel model C50.Boosting veiem com fins a 4 variables s'utilitzen al 100% de les branques i el % d'ús a pujat a totes, lo que fa que el model sigui menys eficient.
+
+```{r}
+model1 <- cbind(rownames(splits_model),splits_model$Overall, 'model C50')
+model2 <- cbind(rownames(splits_model2),splits_model2$Overall, 'model C50.Boosting')
+colnames(model1) <- c('variables','Overall', 'model')
+colnames(model2) <- c('variables','Overall', 'model')
+splits_models <- rbind.data.frame( model1,
+                          model2)
+#plot
+models1.2 <- ggplot(splits_models, aes(x = as.numeric(Overall), y = variables, fill = model)) + 
+  geom_bar(stat='identity') +
+  xlab('Overall') + ylab('Variables') + 
+  ggtitle('Comparació dels splits de les variables') + 
+  facet_grid(~model) +
+  theme(legend.position = "none")
+
+models1.2
+```
+
+> Pel primer model veiem com V1, V3 i V7 són les variables més influients al model. Pel que fa al segon model veiem com la influència de V7 i V3 és manté però l'overrall de V1 es reparteix entre les variables restants, fet que li fa perdre pes dins el model. 
+
+### S'interpreten i comenten les conclusions.
+
+> El millor model d'arbre de decisió generat en quant a precisió general és C50.Boosting, però, aquesta precisió no arriba a ser un 2% superior a la del model C50. Si tenim en compte la eficiència del model, el C50 ens permet generar els resultats amb una menor utilització de variables, i, a més, ens permet identificar clarament 3 variables claus en el procés de classificació, mentre que al C50.Boosting tenim 2 variables molt influients però 3 més amb una carrega mitjana. Així, clarament tenim que les variables V3 i V7 són les més importants alhora de produïr la classificació.
+
+> D'acord amb l'objectiu de l'estudi, el model C50.Boosting ens permet fer una millor classificació dels jugadors com a defenses, i, a pesar de que pot classificar alguns jugadors com a defenses erròniament amb un % lleugerament superior al C50, almenys sabem segur que un defensa no serà etiquetat com a davanter.
+
+***
+
+
+> Provarem un altre arbre de decisó amb el paquet rpart.
+
+```{r}
+rpart.model <- rpart(trainy~., data = as.data.frame(trainX), method = 'class')
+rpart.plot(rpart.model)
+```
+
+
+### Es detalla, comenta i avalua la qualitat de classificació.
+
+```{r}
+predicted_model3 <- predict(rpart.model, as.data.frame(testX), type="class" )
+print(sprintf("La precisió de l'àrbre és: %.4f %%",100*sum(predicted_model3 == testy) / length(predicted_model3)))
+```
+
+> La precisió del model és bona i és exactament igual a la precisió del model C50.Boosting. Visualitzem la matriu de confusió per avaluar les diferències en la classificació per etiquetes. 
+
+```{r warning=FALSE}
+mat_conf3<-table(testy,Predicted=predicted_model3)
+cfm3 <- as_tibble(mat_conf3)
+cm_model3<-plot_confusion_matrix(cfm3, 
+                      target_col = "testy", 
+                      prediction_col = "Predicted",
+                      counts_col = "n",
+                      palette = 'Reds') + 
+  ggtitle('rpart')
+cm_model3
+```
+
+> Aquest model no confon davanters amb defenses ni defenses amb davanters quan els classifica. El model és més precís classificant centrocampistes (77.9%)  que defenses (77.3%) o davanters (73.6%), tot i que també és la posició amb major % de falsos positius (39.6). Així podríem dir que és un model que tendeix a sobrequantificar els centrocampistes. 
+
+### Es comparen i comenten els resultats de manera exhaustiva amb el mètode de construcció anterior.
+
+```{r warning=FALSE}
+grid.arrange(cm_model2,cm_model3,
+             ncol=2)
+```
+
+> Vegem com el model rpart és més precís amb els migcampistes (77.9 vs 65.1), mentre que el model C50.Boosting ho és amb els defenses (86.4 vs 77.3). El model C50.boosting no classifica un defensa com a davanter i el rpart, a més d'això, tampoc classifica un davanter com a defensa. Aquest punt és important, ja que ens permet descartar una posició quan es produeix un error i ens confirma que els defenses i davanters són els que tenen característiques més diferents. El model C50.Boosting tendeix a classificar més defenses i rpart més migcampistes. D'acord amb l'objectiu del nostre estudi és més interessant el model C50.Boosting.
+
+> Estudiem la importància de les variables d'ambdos models.
+
+```{r}
+rpart.model.imp <- data.frame(imp = rpart.model$variable.importance)
+rpart.model.imp <- rpart.model.imp %>% 
+  tibble::rownames_to_column() %>% 
+  dplyr::rename("variable" = rowname) %>% 
+  dplyr::arrange(imp) %>%
+  dplyr::mutate(variable = forcats::fct_inorder(variable))
+
+model3 <- ggplot2::ggplot(rpart.model.imp) +
+  geom_col(aes(x = variable, y = imp),
+           col = "blue", show.legend = F) +
+  coord_flip() +
+  scale_fill_grey() +
+  ggtitle('Importància de les variables al rcart') +
+  theme_bw()
+
+grid.arrange(models1.2,model3,
+             ncol=2)
+```
+
+> Les mètriques de valoració d'ambdòs models no són comparables a nivell intermodel, però, visualitzant aquestes gràfiques sí ens podem fer una idea de com és l'afectació de cada variable intramodel. Les variables V3 i V7 són les més importants pels models C50.Boosting. Ambdós variables són compartides pel model C50 i rcart,però, ambdós casos tenen una variable diferent amb més pes; V1 pel C.50 i V2 pel rcart. Destaca que V1 és la variable menys important a rcart, el que demostra que el funcionament intern dels models és completament diferent.
+
+### Identifica i comenta, quines possibles limitacions tenen les dades que has seleccionat per obtenir conclusions amb els models utilitzats (supervisat).
+
+> Els models supervisats funcionen millor amb dades etiquetades, on es coneix el resultat o la variable objectiu, com és el nostre cas. Això permet que el model aprengui la relació entre les característiques d'entrada i la variable objectiu i faci prediccions sobre dades noves i no vistes.
+
+> En relació a les limitacions podríem destacar:
+
++ Conjunt amb poques variables: pot ser que hi hagi poques variables disponibles per descriure el paper d'un defensor. És possible que això no proporcioni prou informació per classificar amb precisió els jugadors com a defensors.
+
++ Subjectivitat a les dades: les estadístiques utilitzades per classificar els jugadors com a defensors poden ser objecte d'interpretació, com ara la distinció entre una entrada i un bloqueig, que pot donar lloc a dades inconsistents.
+
++ Posicionament: el paper d'un defensor pot variar en funció de la formació, la tàctica i l'estratègia d'un equip, fet que pot dificultar la classificació dels jugadors només a partir d'estadístiques.
+
++ Informació contextual: les situacions dins del joc, com ara el marcador, el temps restant i la posició del camp, poden influir molt en el rendiment i la presa de decisions d'un defensor, que és possible que no es recullin a les estadístiques.
+
++ Sobreentrenament: hi pot haver alguns atributs seleccionats que no estiguin directament relacionats amb el paper d'un defensor, però que es poden utilitzar per classificar un jugador com a tal. Això pot provocar un sobrentrenament i una generalització pobra de dades noves.
+
+
+***
+
+
+## S'identifiquen possibles riscos de l'ús de cada model.
+
+```{r}
+# k = 3
+
+C50.b.df.correct <- sum((testy == 'DF') & (predicted_model2 == testy))
+C50.b.df.incorrect <- sum(testy == 'DF') - C50.b.df.correct
+C50.b.cc.correct <-sum((testy == 'CC') & (predicted_model2 == testy))
+C50.b.cc.incorrect <- sum(testy == 'CC') - C50.b.cc.correct
+C50.b.dl.correct <- sum((testy == 'DL') & (predicted_model2 == testy))
+C50.b.dl.incorrect <- sum(testy == 'DL') - C50.b.dl.correct
+
+C50.b.eval.model <- tibble(cluster = c('DF','CC','DL'),
+                    correcte = c(C50.b.df.correct, C50.b.cc.correct, C50.b.dl.correct),
+                    incorrecte = c(C50.b.df.incorrect, C50.b.cc.incorrect, C50.b.dl.incorrect),
+                    real = c(sum(testy == 'DF'), sum(testy == 'CC'),sum(testy == 'DL')),
+                    classificat = c(sum(predicted_model2 == 'DF'), 
+                                    sum(predicted_model2 == 'CC'),
+                                   sum(predicted_model2 == 'DL'))) %>% 
+  mutate(precision = correcte/classificat,
+         recall =correcte/real,
+         accuracy = sum(correcte)/sum(real)) %>% 
+  mutate(f1score =2.0*((precision*recall)/(precision+recall)))
+
+C50.b.eval.model
+k3.man.eval.model
+```
+
+> Comparant el millor model no supervisat i el millor model supervisat aconseguits, elegiríem l'arbre de decisió amb C50 i boosting. Podem veure com l'exactitud del model és 6 punts superior i la precisió de classificació per els defenses és 1.7 punts superior. A més, el model de boosting té uns valors de recall 15 punts superior al de kmeans, el que vol dir que és molt menys sensible a donar falsos negatius, és a dir a classificar com a davanter o migcampista quan s'és defensa. La posició pitjor classificada pel model kmeans és la de davanter i pel C50 la de migcampista. Això ens dona una idea de quin model elegir en funció de quina posició ens importa menys que es classifiqui erròniament. L'objectiu principal de l'estudi era veure si les mètriques escollides eren predictives de comportaments de jugadors defensius, per lo tant, està clar quin model és millor en aquest sentit, però, si ens interessés un equilibri en encerts amb la categoria de migcampistes, podríem elegir el model de kmeans que ens dona una precisió similar en quant a la classificació de defenses i una molt superior en quant a classificació de migcampistes.
+
+> Tot i així, utilitzar aquest model amb caires predictius duu una sèrie de riscos. S'ha testejat amb una mostra de 268 observacions, quantitat que podríem dir no és massa elevada i un testeig amb una mostra superior podria aportar uns resultats diferents. Tot i ser un model molt bo per classificar defenses i bastant bo per classificar davanters, correrem un risc elevat (36.3%) de classificar migcampistes com a davanters o defenses. Altra risc ja comentat abans és, que el model escollit, al utilitzar el mètode 'adaptative boosting', itera vàries vegades el model, enfocant-se en els errors de la iteració anterior. En el nostre model la millora ha estat petita (<2%), provocant una major utilització de les variables, i en conseqüència que sigui un model menys eficient.
+
+***
+
+## Què he après en aquesta estudi, quines limitacions he observat i com ho he solucionat.
+
+>  Primer de tot he après a crear un dataset de zero i preparar-lo per entrenar un model de classificació. Vaig crear un dataset amb variables que en teoria representaven accions defensives del joc i vaig seleccionar les que creia que eren més representatives segons l'experiència en el camp. El procés EDA em va ajudar a entendre millor com eren aquestes variables i com influirien al model de classificació a construir. Vaig aprendre a realitzar un SVD reduïnt la dimensionalitat a només 7 característiques i vist la qualitat dels models creats aquest procés va ser exitòs. En aquest sentit m'hagués agradat també haver aplicat un PCA per poder saber quin pes tenia cada variable dins de les components finals del dataset. Aquesta informació hagués estat de gran valor al estudiar la influència de les variables dins dels diferents models i regles generades.
+
+> Les limitacions dels models d'aprenentatge no supervisat aplicats al nostre dataset resideixen en els seus patrons bàsics de funcionament: la distància i la densitat. Al no haver zones definides amb més densitat i altres amb menys, aquests models no podien funcionar correctament. Pel que fa als models basats en la distància al seu centroide, al saber que teníem 3 classes de jugadors, vam poder fixar aquest paràmetre manualment i els seus resultats van ser bons. 
+
+> El principal problema observat per les tècniques d'aprenentage supervisat ha estat la manca de volum al dataset, ja que m'hagués agradat tenir un dataset més gran per poder testejar amb més seguretat. Per altra banda també pot haver estat un factor limitant el des balanceig de classes en la mostra que ha provocat que per uns models la classificació de migcampistes fos dolenta i per altres el dels davanters. Podríem haver utilitzat tècniques per penalitzar la classe majoritària durant l'entrenament, però justament era la classe que més ens interessava. També podríem haver realitzat 'oversampling', però com a primera aproximació als models de classificació ho vaig descartar i els resultants han estat bons.
+
+> Com a conclusió final puc dir que he après a preparar un dataset pel seu entrenament i test per un model de classificació, aplicant tant tècniques d'aprenentatge supervisat com no supervisat, veure les seves limitacions, optimitzar resultats i extreure conclusions.
+
+***
